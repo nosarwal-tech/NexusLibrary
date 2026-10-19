@@ -1,0 +1,188 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require_once __DIR__ . '/../../config/db.php';
+
+if ($_SESSION['role'] !== 'admin') {
+    header('Location: ' . SITE_URL . '/pages/dashboard.php');
+    exit;
+}
+
+$user_id = intval($_GET['id'] ?? 0);
+if (!$user_id) {
+    header('Location: index.php');
+    exit;
+}
+
+$stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$user = $stmt->get_result()->fetch_assoc();
+
+if (!$user) {
+    header('Location: index.php');
+    exit;
+}
+
+$page_title = 'Edit User';
+$error = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $name = sanitize($_POST['name'] ?? '');
+    $email = sanitize($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $role = sanitize($_POST['role'] ?? 'member');
+    $phone = sanitize($_POST['phone'] ?? '');
+    $address = sanitize($_POST['address'] ?? '');
+    $membership_validity = sanitize($_POST['membership_validity'] ?? '');
+    $borrow_limit = intval($_POST['borrow_limit'] ?? 5);
+    $status = sanitize($_POST['status'] ?? 'active');
+    
+    if (empty($name) || empty($email)) {
+        $error = 'Please fill in all required fields.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'Please enter a valid email address.';
+    } else {
+        $stmt = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+        $stmt->bind_param("si", $email, $user_id);
+        $stmt->execute();
+        if ($stmt->get_result()->num_rows > 0) {
+            $error = 'This email is already registered to another user.';
+        } else {
+            if (!empty($password)) {
+                if (strlen($password) < 6) {
+                    $error = 'Password must be at least 6 characters.';
+                } else {
+                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                    $stmt = $conn->prepare("UPDATE users SET name=?, email=?, password=?, role=?, phone=?, address=?, membership_validity=?, borrow_limit=?, status=? WHERE id=?");
+                    $stmt->bind_param("sssssssisi", $name, $email, $hashed_password, $role, $phone, $address, $membership_validity, $borrow_limit, $status, $user_id);
+                }
+            } else {
+                $stmt = $conn->prepare("UPDATE users SET name=?, email=?, role=?, phone=?, address=?, membership_validity=?, borrow_limit=?, status=? WHERE id=?");
+                $stmt->bind_param("ssssssisi", $name, $email, $role, $phone, $address, $membership_validity, $borrow_limit, $status, $user_id);
+            }
+            
+            if (empty($error) && $stmt->execute()) {
+                logActivity($_SESSION['user_id'], 'update_user', "Updated user: $name (ID: $user_id)");
+                flashMessage('User updated successfully!', 'success');
+                header('Location: index.php');
+                exit;
+            } elseif (empty($error)) {
+                $error = 'Failed to update user. Please try again.';
+            }
+        }
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo $page_title; ?> | <?php echo SITE_NAME; ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="<?php echo SITE_URL; ?>/assets/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <?php include __DIR__ . '/../../includes/sidebar.php'; ?>
+        <div class="main-content">
+            <?php include __DIR__ . '/../../includes/topbar.php'; ?>
+            <main class="page-content">
+                <?php showFlashMessage(); ?>
+                
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Edit User</h1>
+                        <p class="page-subtitle">Update user information</p>
+                    </div>
+                </div>
+
+                <?php if ($error): ?>
+                    <div class="alert alert-error">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <?php echo htmlspecialchars($error); ?>
+                    </div>
+                <?php endif; ?>
+
+                <div class="card" style="max-width: 700px;">
+                    <form method="POST" action="" data-validate>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Full Name *</label>
+                                <input type="text" name="name" class="form-input" placeholder="Enter full name" required value="<?php echo htmlspecialchars($user['name']); ?>">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Email Address *</label>
+                                <input type="email" name="email" class="form-input" placeholder="Enter email address" required value="<?php echo htmlspecialchars($user['email']); ?>">
+                            </div>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">New Password</label>
+                                <input type="password" name="password" class="form-input" placeholder="Leave blank to keep current">
+                                <small class="text-muted">Only fill if you want to change the password</small>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Role *</label>
+                                <select name="role" class="form-select" required>
+                                    <option value="member" <?php echo $user['role'] === 'member' ? 'selected' : ''; ?>>Member</option>
+                                    <option value="librarian" <?php echo $user['role'] === 'librarian' ? 'selected' : ''; ?>>Librarian</option>
+                                    <option value="admin" <?php echo $user['role'] === 'admin' ? 'selected' : ''; ?>>Admin</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Phone Number</label>
+                                <input type="text" name="phone" class="form-input" placeholder="Enter phone number" value="<?php echo htmlspecialchars($user['phone'] ?? ''); ?>">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Membership Valid Until</label>
+                                <input type="date" name="membership_validity" class="form-input" value="<?php echo htmlspecialchars($user['membership_validity'] ?? ''); ?>">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Address</label>
+                            <textarea name="address" class="form-textarea" placeholder="Enter full address"><?php echo htmlspecialchars($user['address'] ?? ''); ?></textarea>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group" style="max-width: 200px;">
+                                <label class="form-label">Borrow Limit</label>
+                                <input type="number" name="borrow_limit" class="form-input" min="1" max="50" value="<?php echo $user['borrow_limit']; ?>">
+                            </div>
+                            <div class="form-group" style="max-width: 200px;">
+                                <label class="form-label">Status</label>
+                                <select name="status" class="form-select">
+                                    <option value="active" <?php echo $user['status'] === 'active' ? 'selected' : ''; ?>>Active</option>
+                                    <option value="inactive" <?php echo $user['status'] === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
+                                    <option value="suspended" <?php echo $user['status'] === 'suspended' ? 'selected' : ''; ?>>Suspended</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div style="display: flex; gap: 12px; margin-top: 24px;">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Update User
+                            </button>
+                            <a href="index.php" class="btn btn-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </main>
+        </div>
+    </div>
+    <script src="<?php echo SITE_URL; ?>/assets/js/main.js"></script>
+</body>
+</html>
